@@ -1,72 +1,63 @@
-import json
 from openai import OpenAI
 
-client = OpenAI()
+from agent_tools import TOOLS, execute_tool_call
 
-class Functions:
-    def get_weather(self, city: str) -> dict:
-        return {
-            "city": city,
-            "temp": 22,
-            "status": "sunny",
-        }
+DEFAULT_MODEL = "openai.gpt-oss-20b"
+EXIT_COMMANDS = {"exit", "quit"}
 
 
-tools = [
-    {
-        "type": "function",
-        "name": "get_weather",
-        "description": "Get weather for a city",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "city": {"type": "string"},
-            },
-            "required": ["city"],
-        },
-    }
-]
+def run_agent_turn(client, messages, model=DEFAULT_MODEL):
+    while True:
+        response = client.chat.completions.create(
+            model=model,
+            messages=messages,
+            tools=TOOLS,
+            tool_choice="auto",
+        )
+        message = response.choices[0].message
+        messages.append(message.model_dump(exclude_none=True))
 
-# noinspection PyTypeChecker
-response = client.responses.create(
-    model="openai.gpt-oss-20b",
-    input="What's the weather in Paris?",
-    # input="What's the capital of France?",
-    tools=tools,
-)
+        if not message.tool_calls:
+            return message.content or ""
 
-functions = Functions()
-final_response = None
+        for tool_call in message.tool_calls:
+            messages.append(
+                execute_tool_call(
+                    tool_name=tool_call.function.name,
+                    arguments_json=tool_call.function.arguments,
+                    call_id=tool_call.id,
+                )
+            )
 
-for item in response.output:
-    if item.type != "function_call":
-        continue
-    print("item:", item)
-    args = json.loads(item.arguments)
-    print("args:", args)
-    func = getattr(functions, item.name, None)
-    result = func(**args)
 
-    # noinspection PyTypeChecker
-    final_response = client.responses.create(
-        model="openai.gpt-oss-120b",
-        previous_response_id=response.id,
-        input=[
-            {
-                "type": "function_call_output",
-                "call_id": item.call_id,
-                "output": json.dumps(result),
-            }
-        ],
-    )
+def main():
+    client = OpenAI()
+    messages = []
 
-if final_response:
-    final_final_response = final_response
-else:
-    final_final_response = response
+    while True:
+        try:
+            user_input = input("You: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\nBye!")
+            break
 
-print(final_final_response.output_text)
+        if not user_input:
+            continue
 
-print("input:", final_final_response.usage.input_tokens)
-print("output:", final_final_response.usage.output_tokens)
-print("total:", final_final_response.usage.total_tokens)
+        if user_input.lower() in EXIT_COMMANDS:
+            print("Bye!")
+            break
+
+        messages.append({"role": "user", "content": user_input})
+
+        try:
+            reply = run_agent_turn(client, messages)
+        except Exception as error:
+            print(f"Assistant: Error: {error}")
+            continue
+
+        print(f"Assistant: {reply}")
+
+
+if __name__ == "__main__":
+    main()
