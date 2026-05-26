@@ -1,9 +1,29 @@
+import json
+
 from openai import OpenAI
 
-from agent_tools import TOOLS, execute_tool_call
+from system_prompt import SYSTEM_PROMPT
+from tools import TOOL_FUNCTIONS, tools as TOOLS
 from travel_policy_matcher import get_policy_matcher
 
 DEFAULT_MODEL = "openai.gpt-oss-20b"
+
+
+def ensure_system_prompt(messages):
+    if messages and messages[0].get("role") == "system":
+        return
+
+    messages.insert(0, {"role": "system", "content": SYSTEM_PROMPT})
+
+
+def execute_tool_call(tool_name, arguments_json, call_id):
+    arguments = json.loads(arguments_json)
+    result = TOOL_FUNCTIONS[tool_name](**arguments)
+    return {
+        "role": "tool",
+        "tool_call_id": call_id,
+        "content": str(result),
+    }
 
 
 def maybe_answer_from_policy(messages):
@@ -11,6 +31,8 @@ def maybe_answer_from_policy(messages):
         return None
 
     last_message = messages[-1]
+    if last_message.get("role") != "user":
+        return None
 
     matcher = get_policy_matcher()
     if matcher is None:
@@ -23,36 +45,47 @@ def maybe_answer_from_policy(messages):
 
 
 def run_agent_turn(client, messages, model=DEFAULT_MODEL):
+    ensure_system_prompt(messages)
+
     policy_answer = maybe_answer_from_policy(messages)
     if policy_answer:
         return policy_answer
 
-    while True:
-        response = client.chat.completions.create(
-            model=model,
-            messages=messages,
-            tools=TOOLS,
-            tool_choice="auto",
-        )
-        message = response.choices[0].message
-        messages.append(message.model_dump(exclude_none=True))
+    first_response = client.chat.completions.create(
+        model=model,
+        messages=messages,
+        tools=TOOLS,
+        tool_choice="auto",
+    )
+    first_message = first_response.choices[0].message
+    messages.append(first_message.model_dump(exclude_none=True))
 
-        if not message.tool_calls:
-            return message.content or ""
+    if not first_message.tool_calls:
+        return first_message.content or ""
 
-        for tool_call in message.tool_calls:
-            messages.append(
-                execute_tool_call(
-                    tool_name=tool_call.function.name,
-                    arguments_json=tool_call.function.arguments,
-                    call_id=tool_call.id,
-                )
+    for tool_call in first_message.tool_calls:
+        messages.append(
+            execute_tool_call(
+                tool_name=tool_call.function.name,
+                arguments_json=tool_call.function.arguments,
+                call_id=tool_call.id,
             )
+        )
+
+    second_response = client.chat.completions.create(
+        model=model,
+        messages=messages,
+        tools=TOOLS,
+        tool_choice="auto",
+    )
+    second_message = second_response.choices[0].message
+    messages.append(second_message.model_dump(exclude_none=True))
+    return second_message.content or ""
 
 
 def main():
     client = OpenAI()
-    messages = []
+    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
 
     while True:
         user_input = input("You: ").strip()

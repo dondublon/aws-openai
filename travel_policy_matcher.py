@@ -71,23 +71,15 @@ class TravelPolicyMatcher:
         index = int(np.argmax(similarities))
         return index, float(similarities[index])
 
-    def get_answer(self, query):
+    def get_answer(self, query) -> str | None:
+        """if None - the match score os below the treshold."""
         if not query or not self.texts:
             return None
 
-        try:
-            query_embedding = np.asarray(
-                next(self._get_embedder().embed([query])),
-                dtype=np.float32,
-            )
-        except ImportError as error:
-            logger.warning(f"fastembed is not available: {error}")
-            return None
-        except StopIteration:
-            return None
-        except Exception as error:
-            logger.warning(f"Failed to create query embedding: {error}")
-            return None
+        query_embedding = np.asarray(
+            next(self._get_embedder().embed([query])),
+            dtype=np.float32,
+        )
 
         index, score = self.best_match(query_embedding)
         if index is None or score < self.threshold:

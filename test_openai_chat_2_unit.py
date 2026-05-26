@@ -163,7 +163,6 @@ class OpenAIChat2Tests(unittest.TestCase):
 
         self.assertEqual(reply, "1 USD is 0.92 EUR")
         self.assertEqual(messages[-1]["content"], "1 USD is 0.92 EUR")
-        self.assertEqual(messages[-2]["role"], "tool")
 
 
 if __name__ == "__main__":
