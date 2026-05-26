@@ -63,24 +63,17 @@ def run_agent_turn(client, messages, model=DEFAULT_MODEL):
     if not first_message.tool_calls:
         return first_message.content or ""
 
+    tool_replies = []
     for tool_call in first_message.tool_calls:
-        messages.append(
-            execute_tool_call(
-                tool_name=tool_call.function.name,
-                arguments_json=tool_call.function.arguments,
-                call_id=tool_call.id,
-            )
+        tool_message = execute_tool_call(
+            tool_name=tool_call.function.name,
+            arguments_json=tool_call.function.arguments,
+            call_id=tool_call.id,
         )
+        messages.append(tool_message)
+        tool_replies.append(f'{tool_message["content"]} (tool)')
 
-    second_response = client.chat.completions.create(
-        model=model,
-        messages=messages,
-        tools=TOOLS,
-        tool_choice="auto",
-    )
-    second_message = second_response.choices[0].message
-    messages.append(second_message.model_dump(exclude_none=True))
-    return second_message.content or ""
+    return "\n".join(tool_replies)
 
 
 def main():

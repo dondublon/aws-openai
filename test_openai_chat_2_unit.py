@@ -146,23 +146,27 @@ class OpenAIChat2Tests(unittest.TestCase):
         self.assertEqual(reply, "Use the model fallback")
         self.assertEqual(messages[-1]["content"], "Use the model fallback")
 
-    def test_run_agent_turn_handles_tool_call_and_final_reply(self):
+    def test_run_agent_turn_returns_tool_result_when_tool_is_called(self):
         tool_call = SimpleNamespace(
             id="call-1",
             function=SimpleNamespace(
                 name="get_exchange_rate",
-                arguments='{"base_currency":"USD","target_currency":"EUR"}',
+                arguments='{"from_country":"USD","to_country":"EUR"}',
             ),
         )
         first_response = _FakeResponse(_FakeMessage(content=None, tool_calls=[tool_call]))
-        second_response = _FakeResponse(_FakeMessage(content="1 USD is 0.92 EUR", tool_calls=None))
-        client = _FakeClient([first_response, second_response])
+        client = _FakeClient([first_response])
         messages = [{"role": "user", "content": "Convert 1 USD to EUR"}]
 
-        reply = openai_chat_2.run_agent_turn(client, messages, "test-model")
+        with patch.dict(
+            openai_chat_2.TOOL_FUNCTIONS,
+            {"get_exchange_rate": lambda from_country, to_country: "1 USD = 0.92 EUR"},
+        ):
+            reply = openai_chat_2.run_agent_turn(client, messages, "test-model")
 
-        self.assertEqual(reply, "1 USD is 0.92 EUR")
-        self.assertEqual(messages[-1]["content"], "1 USD is 0.92 EUR")
+        self.assertEqual(reply, "1 USD = 0.92 EUR (tool)")
+        self.assertEqual(messages[-1]["role"], "tool")
+        self.assertEqual(messages[-1]["content"], "1 USD = 0.92 EUR")
 
 
 if __name__ == "__main__":
