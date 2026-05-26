@@ -23,20 +23,20 @@ tools = [
         "type": "function",
         "function": {
             "name": "get_exchange_rate",
-            "description": "Get exchange rate for a currency from one currency to another",
+            "description": "Get exchange rate from one country or currency to another",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "from_currency": {
+                    "from_country": {
                         "type": "string",
-                        "description": "three letter currency code to convert from, like USD or EUR"
+                        "description": "Country name or three letter currency code to convert from"
                     },
-                    "to_currency": {
+                    "to_country": {
                         "type": "string",
-                        "description": "three letter currency code to convert to, like USD or EUR"
+                        "description": "Country name or three letter currency code to convert to"
                     }
                 },
-                "required": ["from_currency", "to_currency"]
+                "required": ["from_country", "to_country"]
             }
         }
     }

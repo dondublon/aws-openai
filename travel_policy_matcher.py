@@ -5,7 +5,6 @@ import numpy as np
 from fastembed import TextEmbedding
 
 from config import TRAVEL_POLICY_EMBEDDINGS_PATH, EMBEDDING_MIN_SIMILARITY, EMBEDDING_MODEL
-from openai_chat_2 import _POLICY_MATCHER_INITIALIZED
 
 from logging_config import logger
 _POLICY_MATCHER = None
@@ -47,8 +46,6 @@ class TravelPolicyMatcher:
 
     def _get_embedder(self):
         if self._embedder is None:
-
-
             self._embedder = TextEmbedding(model_name=self.embedding_model)
         return self._embedder
 

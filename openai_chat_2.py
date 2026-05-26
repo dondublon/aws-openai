@@ -4,7 +4,6 @@ from agent_tools import TOOLS, execute_tool_call
 from travel_policy_matcher import get_policy_matcher
 
 DEFAULT_MODEL = "openai.gpt-oss-20b"
-_POLICY_MATCHER_INITIALIZED = False
 
 
 def maybe_answer_from_policy(messages):
