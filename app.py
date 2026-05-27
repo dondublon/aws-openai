@@ -6,17 +6,18 @@ from logging_config import logger
 from chat_request import chatRequest 
 from config import MODEL_NAME, DOCUMENTS_PATH, SIMILARITY_THRESHOLD
 from text_processor_impl import textProcessor
-
+from chat_request_RAG import chatRequestRag
 from system_prompt import SYSTEM_PROMPT
 from tools import TOOL_FUNCTIONS
 def _bootstrap():
     docs: list[str] = DOCUMENTS_PATH.read_text(encoding="utf8").splitlines()
     logger.debug(f"read {len(docs)} documents")
     textProcessor.setDocuments(docs)  
-def _get_response_from_rag(query_text) :
+def _get_response_from_rag(query_text, client) :
     logger.debug(f"query text is {query_text}")
-    response =  textProcessor.process(query_text, threshold=SIMILARITY_THRESHOLD)  
-    logger.debug(f"response from RAG is {response}")
+    retrieved_doc =  textProcessor.process(query_text, threshold=SIMILARITY_THRESHOLD)  
+    logger.debug(f"response from RAG is {retrieved_doc}")
+    response = chatRequestRag(MODEL_NAME,client,query_text, retrieved_doc) if retrieved_doc else None
     return response
 def _finishProcess():
    print("Chat console exited. Thanks & bye")
@@ -38,7 +39,7 @@ def _get_response_from_tool(response, messages):
         messages.append({"role": "tool", "content": responseFromTool, "tool_call_id": tool_call.id})   
     return responseFromTool
 def _get_response(messages, client):
-    response = _get_response_from_rag(messages[-1]["content"])
+    response = _get_response_from_rag(messages[-1]["content"], client)
     role = "assistant"
     if not response:
         '''

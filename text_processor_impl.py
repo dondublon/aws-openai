@@ -19,7 +19,7 @@ class _FastEmbedTextProcessor(TextProcessor):
         
     def setDocuments(self, docs: list[str]):
         if self._documents != docs:
-            logger.debug(f"setting new {len(docs)} documents")
+            logger.debug(f"setting new {len(docs)} docs")
             self._documents = docs
             self._embedding_docs = np.array(list(self._model.embed(docs)))
    
