@@ -1,5 +1,7 @@
 import json
 
+from fastapi.responses import JSONResponse
+from fastapi.exceptions import RequestValidationError
 import openai
 
 from logging_config import logger 
@@ -9,6 +11,12 @@ from text_processor_impl import textProcessor
 from chat_request_RAG import chatRequestRag
 from system_prompt import SYSTEM_PROMPT
 from tools import TOOL_FUNCTIONS
+from fastapi import FastAPI
+from pydantic import BaseModel, Field
+
+class ChatRequestDTO(BaseModel):
+    query: str = Field(..., min_length=10)
+
 def _bootstrap():
     docs: list[str] = DOCUMENTS_PATH.read_text(encoding="utf8").splitlines()
     logger.debug(f"read {len(docs)} documents")
@@ -19,8 +27,7 @@ def _get_response_from_rag(query_text, client) :
     logger.debug(f"response from RAG is {retrieved_doc}")
     response = chatRequestRag(MODEL_NAME,client,query_text, retrieved_doc) if retrieved_doc else None
     return response
-def _finishProcess():
-   print("Chat console exited. Thanks & bye")
+
 def _get_response_from_tool(response, messages):
     responseFromTool = None 
     if response.tool_calls:
@@ -39,44 +46,82 @@ def _get_response_from_tool(response, messages):
         messages.append({"role": "tool", "content": responseFromTool, "tool_call_id": tool_call.id})   
     return responseFromTool
 def _get_response(messages, client):
-    response = _get_response_from_rag(messages[-1]["content"], client)
+    responseFromRag = _get_response_from_rag(messages[-1]["content"], client)
     role = "assistant"
-    if not response:
+    if not responseFromRag:
         '''
         fallback to LLM model
         '''
         
-        response = chatRequest(MODEL_NAME, client, messages)
-        responseFromTool = _get_response_from_tool(response, messages)
+        responseFromLLM = chatRequest(MODEL_NAME, client, messages)
+        responseFromTool = _get_response_from_tool(responseFromLLM, messages)
         if  responseFromTool:
             response = responseFromTool
             role = "tool"
         else:
-            messages.append({"role": "assistant", "content": response.content})
-            response = response.content
+            messages.append({"role": "assistant", "content": responseFromLLM.content})
+            response = responseFromLLM.content
     else:
-         messages.append({"role": "assistant", "content": response})        
+        response = responseFromRag
+        messages.append({"role": "assistant", "content": responseFromRag})        
     return response, role
-def main():
-    client = openai.OpenAI()
+
+app = FastAPI()
+@app.on_event("startup")
+def on_start_up()->None:
+    app.state.client = openai.OpenAI()
     _bootstrap()
-    print(f"{MODEL_NAME} chat console started. Type 'exit' to quit.")
-    messages = [
+    app.state.messages = [
         {"role": "system", 
-         "content": SYSTEM_PROMPT
-         }
+            "content": SYSTEM_PROMPT
+            }
     ]
-    while True:
-        try:
-            user_input = input("You: ")
-            if user_input.lower() == "exit":
-                _finishProcess()
-                break
-            messages.append({"role": "user", "content": user_input})
-            response, role = _get_response(messages, client)
-            print(f"{role.capitalize()}: {response}")
-        except KeyboardInterrupt:
-            _finishProcess()
-            break   
-if __name__ == "__main__":
-    main()
+@app.exception_handler(RequestValidationError)
+def exception_handler(_, exc: RequestValidationError):
+    logger.error(f"Validation error: {exc}")
+    return JSONResponse(
+        status_code=400,
+        content={"error": "Invalid request", "details": exc.errors()}
+    )
+@app.post("/chat")
+def chat_endpoint(body: ChatRequestDTO):
+    try:
+        user_input = body.query
+        app.state.messages.append({"role": "user", "content": user_input})
+        result = None
+    
+        response, role = _get_response(app.state.messages, app.state.client)
+        result = {"response": response, "role": role}  
+    except Exception as e:
+        logger.error(f"Error processing chat request: {e}")
+        result =  JSONResponse(
+            status_code=500,
+            content={"error": "An error occurred while processing the request."}
+        )
+    return result
+@app.get("/health")
+def health_check():
+    return {"status": "healthy"}
+# def main():
+#     client = openai.OpenAI()
+#     _bootstrap()
+#     print(f"{MODEL_NAME} chat console started. Type 'exit' to quit.")
+#     messages = [
+#         {"role": "system", 
+#          "content": SYSTEM_PROMPT
+#          }
+#     ]
+#     while True:
+#         try:
+#             user_input = input("You: ")
+#             if user_input.lower() == "exit":
+#                 _finishProcess()
+#                 break
+#             messages.append({"role": "user", "content": user_input})
+#             response, role = _get_response(messages, client)
+#             print(f"{role.capitalize()}: {response}")
+#         except KeyboardInterrupt:
+#             _finishProcess()
+#             break   
+# if __name__ == "__main__":
+#     main()
