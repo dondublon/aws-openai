@@ -13,13 +13,15 @@ class _FastEmbedTextProcessor(TextProcessor):
     _model: TextEmbedding
     _embedding_docs: np.ndarray|None
     def __init__(self, model: TextEmbedding):
-        self._documents = None
+        self._documents = []
         self._model = model
         self._embedding_docs = None
         
     def setDocuments(self, docs: list[str]):
-        self._documents = docs
-        self._embedding_docs = np.array(list(self._model.embed(docs)))
+        if self._documents != docs:
+            logger.debug(f"setting new {len(docs)} documents")
+            self._documents = docs
+            self._embedding_docs = np.array(list(self._model.embed(docs)))
    
     def process(self, query: str, threshold: float = 0.7) -> str|None:
         query_embedding:np.ndarray = np.array(list(self._model.embed([query]))[0])

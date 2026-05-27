@@ -41,6 +41,10 @@ def _get_response(messages, client):
     response = _get_response_from_rag(messages[-1]["content"])
     role = "assistant"
     if not response:
+        '''
+        fallback to LLM model
+        '''
+        
         response = chatRequest(MODEL_NAME, client, messages)
         responseFromTool = _get_response_from_tool(response, messages)
         if  responseFromTool:
