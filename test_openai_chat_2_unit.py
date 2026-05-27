@@ -73,7 +73,9 @@ with patch.dict(
     sys.modules,
     {"openai": fake_openai_module, "logging_config": fake_logging_config},
 ), patch("builtins.print"):
-    openai_chat_2 = importlib.import_module("openai_chat_2")
+    importlib.import_module("openai_chat_2")
+    text_processor_impl = importlib.import_module("text_processor_impl")
+    travel_policy_matcher = importlib.import_module("travel_policy_matcher")
 
 
 class OpenAIChat2Tests(unittest.TestCase):
@@ -86,7 +88,7 @@ class OpenAIChat2Tests(unittest.TestCase):
             json.dump(rows, handle)
             handle.flush()
             embedder = SimpleNamespace(embed=lambda texts: iter(([1.0, 0.0],)))
-            matcher = openai_chat_2.TravelPolicyMatcher(
+            matcher = travel_policy_matcher.TravelPolicyMatcher(
                 embeddings_path=handle.name,
                 threshold=0.8,
                 embedder=embedder,
@@ -106,7 +108,7 @@ class OpenAIChat2Tests(unittest.TestCase):
             json.dump(rows, handle)
             handle.flush()
             embedder = SimpleNamespace(embed=lambda texts: iter(([diagonal, diagonal],)))
-            matcher = openai_chat_2.TravelPolicyMatcher(
+            matcher = travel_policy_matcher.TravelPolicyMatcher(
                 embeddings_path=handle.name,
                 threshold=0.8,
                 embedder=embedder,
@@ -119,13 +121,14 @@ class OpenAIChat2Tests(unittest.TestCase):
     def test_run_agent_turn_returns_policy_match_without_model_call(self):
         client = _FakeClient([])
         messages = [{"role": "user", "content": "Do I need a passport?"}]
+        processor = text_processor_impl.TextProcessorImpl()
 
         with patch.object(
-            openai_chat_2,
+            text_processor_impl,
             "get_policy_matcher",
             return_value=SimpleNamespace(get_answer=lambda query: "Valid passports are required."),
         ):
-            reply = openai_chat_2.run_agent_turn(client, messages, "test-model")
+            reply = processor.get_answer(client, messages, "test-model")
 
         self.assertEqual(reply, "Valid passports are required.")
         self.assertEqual(messages[-1]["role"], "assistant")
@@ -135,13 +138,14 @@ class OpenAIChat2Tests(unittest.TestCase):
         response = _FakeResponse(_FakeMessage(content="Use the model fallback", tool_calls=None))
         client = _FakeClient([response])
         messages = [{"role": "user", "content": "How is the weather in Paris?"}]
+        processor = text_processor_impl.TextProcessorImpl()
 
         with patch.object(
-            openai_chat_2,
+            text_processor_impl,
             "get_policy_matcher",
             return_value=SimpleNamespace(get_answer=lambda query: None),
         ):
-            reply = openai_chat_2.run_agent_turn(client, messages, "test-model")
+            reply = processor.get_answer(client, messages, "test-model")
 
         self.assertEqual(reply, "Use the model fallback")
         self.assertEqual(messages[-1]["content"], "Use the model fallback")
@@ -157,12 +161,13 @@ class OpenAIChat2Tests(unittest.TestCase):
         first_response = _FakeResponse(_FakeMessage(content=None, tool_calls=[tool_call]))
         client = _FakeClient([first_response])
         messages = [{"role": "user", "content": "Convert 1 USD to EUR"}]
+        processor = text_processor_impl.TextProcessorImpl()
 
         with patch.dict(
-            openai_chat_2.TOOL_FUNCTIONS,
+            text_processor_impl.TOOL_FUNCTIONS,
             {"get_exchange_rate": lambda from_country, to_country: "1 USD = 0.92 EUR"},
         ):
-            reply = openai_chat_2.run_agent_turn(client, messages, "test-model")
+            reply = processor.get_answer(client, messages, "test-model")
 
         self.assertEqual(reply, "1 USD = 0.92 EUR (tool)")
         self.assertEqual(messages[-1]["role"], "tool")
