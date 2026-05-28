@@ -2,7 +2,6 @@
 ## Creating CloudFormation stack from template for following architecture
 ### Architecture
 - HTTP Gateway with proxying POST /chat request  and VPC Link integration (No cognito authorizer required)
-- HTTP Gateway with login Lambda function integration
 - VPC Link
 - Inner Application Load Balancer / Target group 
 - ECS/Fargate cluster with autoscaling policy [ 1-4 ] tasks
