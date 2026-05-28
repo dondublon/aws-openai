@@ -96,9 +96,11 @@ def chat_endpoint(body: ChatRequestDTO):
                
         messages.append({"role": "user", "content": body.query})
         response, role = _get_response(messages, app.state.client)
-        logger.debug(f"last message: {messages[-1]}")
+        messageToPersist = messages[-1]
+        logger.debug(f"response message: {messageToPersist}")
         app.state.chat_store.append_message(session_id, "user", body.query)
-        app.state.chat_store.append_message(session_id, role, response)
+        app.state.chat_store.append_message(session_id, messageToPersist["role"],\
+            messageToPersist["content"], messageToPersist.get("tool_call_id", None))
         result = {"response": response, "session_id": session_id, "name": name}
     except Exception as e:
         logger.error(f"Error processing chat request: {e}")

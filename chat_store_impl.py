@@ -28,10 +28,6 @@ class _DynamoChatStore(ChatStore):
                 "created_at": now,
                 "updated_at": now,
                 "name": name
-            },
-            ConditionExpression="attribute_not_exists(#n)",
-            ExpressionAttributeNames={
-                "#n": "name"
             }
         )
         return session_id, name
@@ -43,9 +39,17 @@ class _DynamoChatStore(ChatStore):
         )
         items = response.get("Items", [])
         return [
-            {"role": item["role"], "content": item["content"]}
-            for item in items
-        ]
+    {
+        "role": item["role"],
+        "content": item["content"],
+        **(
+            {"tool_call_id": item["tool_call_id"]}
+            if "tool_call_id" in item
+            else {}
+        ),
+    }
+    for item in items
+]
 
     def append_message(self, session_id: str, role: str, content: str, tool_call_id: str | None = None) -> None:
         now = datetime.now(timezone.utc).isoformat()
