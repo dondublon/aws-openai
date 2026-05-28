@@ -102,26 +102,3 @@ def chat_endpoint(body: ChatRequestDTO):
 @app.get("/health")
 def health_check():
     return {"status": "healthy"}
-# def main():
-#     client = openai.OpenAI()
-#     _bootstrap()
-#     print(f"{MODEL_NAME} chat console started. Type 'exit' to quit.")
-#     messages = [
-#         {"role": "system", 
-#          "content": SYSTEM_PROMPT
-#          }
-#     ]
-#     while True:
-#         try:
-#             user_input = input("You: ")
-#             if user_input.lower() == "exit":
-#                 _finishProcess()
-#                 break
-#             messages.append({"role": "user", "content": user_input})
-#             response, role = _get_response(messages, client)
-#             print(f"{role.capitalize()}: {response}")
-#         except KeyboardInterrupt:
-#             _finishProcess()
-#             break   
-# if __name__ == "__main__":
-#     main()
