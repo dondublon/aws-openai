@@ -1,0 +1,477 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Existing HTTP API -> VPC Link -> Internal ALB -> TG -> ECS/Fargate from ECR
+
+Parameters:
+  LogLevel:
+    Type: String
+    Default: DEBUG
+    Description: Application log level
+  HttpApiId:
+    Type: String
+    Description: Existing API Gateway HTTP API ID
+    Default: qrfd5s2xt9
+
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Default: vpc-0f2a9e73cc1dc3c26
+
+  AlbSubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Public subnets in different AZs for the internal ALB, VPC Link, and Fargate tasks
+
+  EcrImageUri:
+    Type: String
+    Description: Example 123456789012.dkr.ecr.us-east-1.amazonaws.com/my-app:latest
+    Default: 246814138873.dkr.ecr.us-east-1.amazonaws.com/rag-agent
+
+  ContainerPort:
+    Type: Number
+    Default: 3000
+
+  HealthCheckPath:
+    Type: String
+    Default: /health
+
+  RoutePath:
+    Type: String
+    Default: /chat
+    Description: Proxy route path for HTTP API
+
+  FargateCpu:
+    Type: String
+    Default: "512"
+    AllowedValues:
+      - "256"
+      - "512"
+      - "1024"
+      - "2048"
+      - "4096"
+
+  FargateMemory:
+    Type: String
+    Default: "1024"
+    AllowedValues:
+      - "512"
+      - "1024"
+      - "2048"
+      - "3072"
+      - "4096"
+      - "5120"
+      - "6144"
+      - "7168"
+      - "8192"
+
+  ServiceMinCapacity:
+    Type: Number
+    Default: 1
+    Description: Minimum number of ECS tasks
+
+  ServiceDesiredCount:
+    Type: Number
+    Default: 2
+    Description: Initial desired number of ECS tasks
+
+  ServiceMaxCapacity:
+    Type: Number
+    Default: 4
+    Description: Maximum number of ECS tasks
+
+  RequestsPerTaskTarget:
+    Type: Number
+    Default: 3
+    Description: Target average number of ALB requests per ECS task
+
+Resources:
+  ApiGatewayVpcLinkSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for API Gateway VPC Link
+      VpcId: !Ref VpcId
+
+  AlbSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Internal ALB security group
+      VpcId: !Ref VpcId
+
+  FargateServiceSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: ECS Fargate app security group
+      VpcId: !Ref VpcId
+
+  VpcLinkToAlbEgress:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId: !Ref ApiGatewayVpcLinkSG
+      IpProtocol: tcp
+      FromPort: 80
+      ToPort: 80
+      DestinationSecurityGroupId: !Ref AlbSG
+
+  AlbFromVpcLinkIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref AlbSG
+      IpProtocol: tcp
+      FromPort: 80
+      ToPort: 80
+      SourceSecurityGroupId: !Ref ApiGatewayVpcLinkSG
+
+  AlbToFargateEgress:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId: !Ref AlbSG
+      IpProtocol: tcp
+      FromPort: !Ref ContainerPort
+      ToPort: !Ref ContainerPort
+      DestinationSecurityGroupId: !Ref FargateServiceSG
+
+  FargateFromAlbIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref FargateServiceSG
+      IpProtocol: tcp
+      FromPort: !Ref ContainerPort
+      ToPort: !Ref ContainerPort
+      SourceSecurityGroupId: !Ref AlbSG
+
+  FargateAllOutbound:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId: !Ref FargateServiceSG
+      IpProtocol: -1
+      CidrIp: 0.0.0.0/0
+
+  EcsCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Sub app-cluster-${AWS::StackName}
+
+  AppLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /ecs/app-${AWS::StackName}
+      RetentionInDays: 7
+
+  EcsTaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ecs-task-execution-role-${AWS::StackName}
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+
+  EcsTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ecs-task-role-${AWS::StackName}
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonDynamoDBFullAccess
+
+    AppTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub app-task-${AWS::StackName}
+      RequiresCompatibilities:
+        - FARGATE
+      NetworkMode: awsvpc
+      Cpu: !Ref FargateCpu
+      Memory: !Ref FargateMemory
+      ExecutionRoleArn: !GetAtt EcsTaskExecutionRole.Arn
+      TaskRoleArn: !GetAtt EcsTaskRole.Arn
+      ContainerDefinitions:
+        - Name: app
+          Image: !Ref EcrImageUri
+          Essential: true
+          PortMappings:
+            - ContainerPort: !Ref ContainerPort
+              Protocol: tcp
+          Environment:
+            - Name: PORT
+              Value: !Ref ContainerPort
+            - Name: LOG_LEVEL
+              Value: !Ref LogLevel
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref AppLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: app
+  AppTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub app-tg-${AWS::StackName}
+      VpcId: !Ref VpcId
+      Protocol: HTTP
+      Port: !Ref ContainerPort
+      TargetType: ip
+      HealthCheckProtocol: HTTP
+      HealthCheckPath: !Ref HealthCheckPath
+      Matcher:
+        HttpCode: "200"
+
+  InternalAlb:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: !Sub inner-alb-${AWS::StackName}
+      Type: application
+      Scheme: internal
+      Subnets: !Ref AlbSubnetIds
+      SecurityGroups:
+        - !Ref AlbSG
+
+  AlbListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref InternalAlb
+      Protocol: HTTP
+      Port: 80
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref AppTargetGroup
+
+  EcsService:
+    Type: AWS::ECS::Service
+    DependsOn:
+      - AlbListener
+    Properties:
+      ServiceName: !Sub app-service-${AWS::StackName}
+      Cluster: !Ref EcsCluster
+      LaunchType: FARGATE
+      DesiredCount: !Ref ServiceDesiredCount
+      HealthCheckGracePeriodSeconds: 40
+      TaskDefinition: !Ref AppTaskDefinition
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          SecurityGroups:
+            - !Ref FargateServiceSG
+          Subnets: !Ref AlbSubnetIds
+      LoadBalancers:
+        - ContainerName: app
+          ContainerPort: !Ref ContainerPort
+          TargetGroupArn: !Ref AppTargetGroup
+
+  EcsServiceScalableTarget:
+    Type: AWS::ApplicationAutoScaling::ScalableTarget
+    Properties:
+      MinCapacity: !Ref ServiceMinCapacity
+      MaxCapacity: !Ref ServiceMaxCapacity
+      ResourceId: !Sub
+        - service/${ClusterName}/${ServiceName}
+        - ClusterName: !Ref EcsCluster
+          ServiceName: !GetAtt EcsService.Name
+      ScalableDimension: ecs:service:DesiredCount
+      ServiceNamespace: ecs
+
+  EcsRequestCountScalingPolicy:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Properties:
+      PolicyName: !Sub app-ecs-request-count-scaling-${AWS::StackName}
+      PolicyType: TargetTrackingScaling
+      ScalingTargetId: !Ref EcsServiceScalableTarget
+      TargetTrackingScalingPolicyConfiguration:
+        TargetValue: !Ref RequestsPerTaskTarget
+        ScaleInCooldown: 10
+        ScaleOutCooldown: 10
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ALBRequestCountPerTarget
+          ResourceLabel: !Join
+            - "/"
+            - - !GetAtt InternalAlb.LoadBalancerFullName
+              - !GetAtt AppTargetGroup.TargetGroupFullName
+
+  RagAgentConversationsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: rag-agent-conversations
+      BillingMode: PROVISIONED
+      AttributeDefinitions:
+        - AttributeName: session_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: session_id
+          KeyType: HASH
+      ProvisionedThroughput:
+        ReadCapacityUnits: 1
+        WriteCapacityUnits: 1
+
+  RagAgentMessagesTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: rag-agent-messages
+      BillingMode: PROVISIONED
+      AttributeDefinitions:
+        - AttributeName: session_id
+          AttributeType: S
+        - AttributeName: seq
+          AttributeType: N
+      KeySchema:
+        - AttributeName: session_id
+          KeyType: HASH
+        - AttributeName: seq
+          KeyType: RANGE
+      ProvisionedThroughput:
+        ReadCapacityUnits: 1
+        WriteCapacityUnits: 1
+
+  ConversationsTableReadScalableTarget:
+    Type: AWS::ApplicationAutoScaling::ScalableTarget
+    DependsOn:
+      - RagAgentConversationsTable
+    Properties:
+      MinCapacity: 1
+      MaxCapacity: 5
+      ResourceId: table/rag-agent-conversations
+      ScalableDimension: dynamodb:table:ReadCapacityUnits
+      ServiceNamespace: dynamodb
+
+  ConversationsTableWriteScalableTarget:
+    Type: AWS::ApplicationAutoScaling::ScalableTarget
+    DependsOn:
+      - RagAgentConversationsTable
+    Properties:
+      MinCapacity: 1
+      MaxCapacity: 5
+      ResourceId: table/rag-agent-conversations
+      ScalableDimension: dynamodb:table:WriteCapacityUnits
+      ServiceNamespace: dynamodb
+
+  MessagesTableReadScalableTarget:
+    Type: AWS::ApplicationAutoScaling::ScalableTarget
+    DependsOn:
+      - RagAgentMessagesTable
+    Properties:
+      MinCapacity: 1
+      MaxCapacity: 5
+      ResourceId: table/rag-agent-messages
+      ScalableDimension: dynamodb:table:ReadCapacityUnits
+      ServiceNamespace: dynamodb
+
+  MessagesTableWriteScalableTarget:
+    Type: AWS::ApplicationAutoScaling::ScalableTarget
+    DependsOn:
+      - RagAgentMessagesTable
+    Properties:
+      MinCapacity: 1
+      MaxCapacity: 5
+      ResourceId: table/rag-agent-messages
+      ScalableDimension: dynamodb:table:WriteCapacityUnits
+      ServiceNamespace: dynamodb
+
+  ConversationsTableReadScalingPolicy:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Properties:
+      PolicyName: !Sub conversations-read-scaling-${AWS::StackName}
+      PolicyType: TargetTrackingScaling
+      ScalingTargetId: !Ref ConversationsTableReadScalableTarget
+      TargetTrackingScalingPolicyConfiguration:
+        TargetValue: 70
+        PredefinedMetricSpecification:
+          PredefinedMetricType: DynamoDBReadCapacityUtilization
+
+  ConversationsTableWriteScalingPolicy:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Properties:
+      PolicyName: !Sub conversations-write-scaling-${AWS::StackName}
+      PolicyType: TargetTrackingScaling
+      ScalingTargetId: !Ref ConversationsTableWriteScalableTarget
+      TargetTrackingScalingPolicyConfiguration:
+        TargetValue: 70
+        PredefinedMetricSpecification:
+          PredefinedMetricType: DynamoDBWriteCapacityUtilization
+
+  MessagesTableReadScalingPolicy:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Properties:
+      PolicyName: !Sub messages-read-scaling-${AWS::StackName}
+      PolicyType: TargetTrackingScaling
+      ScalingTargetId: !Ref MessagesTableReadScalableTarget
+      TargetTrackingScalingPolicyConfiguration:
+        TargetValue: 70
+        PredefinedMetricSpecification:
+          PredefinedMetricType: DynamoDBReadCapacityUtilization
+
+  MessagesTableWriteScalingPolicy:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Properties:
+      PolicyName: !Sub messages-write-scaling-${AWS::StackName}
+      PolicyType: TargetTrackingScaling
+      ScalingTargetId: !Ref MessagesTableWriteScalableTarget
+      TargetTrackingScalingPolicyConfiguration:
+        TargetValue: 70
+        PredefinedMetricSpecification:
+          PredefinedMetricType: DynamoDBWriteCapacityUtilization
+
+  ApiVpcLink:
+    Type: AWS::ApiGatewayV2::VpcLink
+    Properties:
+      Name: !Sub http-api-vpclink-${AWS::StackName}
+      SubnetIds: !Ref AlbSubnetIds
+      SecurityGroupIds:
+        - !Ref ApiGatewayVpcLinkSG
+
+  ApiIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref HttpApiId
+      IntegrationType: HTTP_PROXY
+      IntegrationMethod: ANY
+      IntegrationUri: !Ref AlbListener
+      ConnectionType: VPC_LINK
+      ConnectionId: !Ref ApiVpcLink
+      PayloadFormatVersion: "1.0"
+
+ 
+
+  
+
+ 
+
+  ChatRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApiId
+      RouteKey: "POST /chat"
+      Target: !Sub "integrations/${ApiIntegration}"
+ 
+  
+
+  
+  
+  
+Outputs:
+  InternalAlbDnsName:
+    Value: !GetAtt InternalAlb.DNSName
+
+  TargetGroupArn:
+    Value: !Ref AppTargetGroup
+
+  EcsClusterName:
+    Value: !Ref EcsCluster
+
+  EcsServiceName:
+    Value: !GetAtt EcsService.Name
+
+  VpcLinkId:
+    Value: !Ref ApiVpcLink
+
+  ApiRoute:
+    Value: !Sub "ANY ${RoutePath}"
+
+
+
